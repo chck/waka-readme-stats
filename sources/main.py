@@ -256,8 +256,10 @@ async def collect_extra_owner_repositories(known: List[Dict]) -> List[Dict]:
     """
     seen = {(repo["owner"]["login"].lower(), repo["name"]) for repo in known}
     found = list()
-    for owner in EM.EXTRA_GH_TOKENS.keys():
-        DBM.i(f"\tGetting repositories contributed to under '{owner}' with its own token...")
+    owners = list(EM.EXTRA_GH_TOKENS.keys())
+    for ind, owner in enumerate(owners):
+        # Owner names stay out of the log: Action logs of public profile repos are public.
+        DBM.i(f"\tGetting repositories contributed to under extra owner {ind + 1}/{len(owners)} with its own token...")
         contributed = await DM.get_remote_graphql("repos_contributed_to", username=GHM.USER.login, _auth_owner=owner)
         for repo in contributed:
             if repo is None or repo["isFork"]:
@@ -267,7 +269,7 @@ async def collect_extra_owner_repositories(known: List[Dict]) -> List[Dict]:
                 continue
             seen.add(key)
             found.append(repo)
-        DBM.g(f"\tRepositories under '{owner}' collected!")
+        DBM.g(f"\tRepositories under extra owner {ind + 1}/{len(owners)} collected!")
     return found
 
 

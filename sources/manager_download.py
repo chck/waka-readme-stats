@@ -278,11 +278,12 @@ class DownloadManager:
             body = res.json()
             if "errors" not in body:
                 return body
-            errors_preview = json.dumps(body["errors"])[:500]
+            # Error bodies can name private repositories, and Action logs of public repos are public: log types only.
+            error_types = sorted({str(error.get("type", "UNKNOWN")) for error in body["errors"]})
             if body.get("data") is None:
-                raise Exception(f"Query '{query}' failed with GraphQL errors: {errors_preview}")
+                raise Exception(f"Query '{query}' failed with {len(body['errors'])} GraphQL error(s) of type {error_types}")
             # Partial results: inaccessible nodes come back as null alongside `errors`; keep the rest.
-            DBM.w(f"Query '{query}' returned partial data with GraphQL errors: {errors_preview}")
+            DBM.w(f"Query '{query}' returned partial data with {len(body['errors'])} GraphQL error(s) of type {error_types}")
             return {"data": body["data"]}
 
         # Transient errors can happen (GitHub flakiness, rate limiting, proxies returning HTML/empty bodies).
