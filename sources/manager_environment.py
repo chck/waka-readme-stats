@@ -1,4 +1,5 @@
 from os import getenv
+from re import fullmatch
 from typing import Dict
 
 
@@ -12,6 +13,8 @@ def parse_owner_tokens(raw: str) -> Dict[str, str]:
         owner, token = owner.strip(), token.strip()
         if separator == "" or owner == "" or token == "":
             raise ValueError(f"EXTRA_GH_TOKENS line {line_number} is not in 'owner=token' form; fix the input and rerun")
+        if fullmatch(r"[A-Za-z0-9-]+", owner) is None:
+            raise ValueError(f"EXTRA_GH_TOKENS line {line_number} has an owner that is not a GitHub login (letters, digits, '-'); fix the input and rerun")
         tokens[owner.lower()] = token
     return tokens
 
