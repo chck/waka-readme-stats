@@ -1,10 +1,13 @@
 import asyncio
 import collections.abc
 import json
+from datetime import date, timedelta
 from hashlib import md5
+from math import ceil
 from os.path import join
 from string import Template
-from typing import Any, Callable, Optional, List, Tuple
+from time import time
+from typing import Any, Callable, Optional, List, Set, Tuple
 
 from httpx import AsyncClient
 from yaml import safe_load
@@ -101,6 +104,22 @@ GITHUB_API_QUERIES = {
                 }
             }
         }
+    }
+}
+""",
+    # Query to collect info about a single repository, in the same shape as the repository list queries.
+    "repository_info": """
+{
+    repository(owner: "$owner", name: "$name") {
+        primaryLanguage {
+            name
+        }
+        name
+        owner {
+            login
+        }
+        isPrivate
+        isFork
     }
 }
 """,
@@ -249,6 +268,59 @@ class DownloadManager:
         :return: Response YAML dictionary.
         """
         return await DownloadManager._get_remote_resource(resource, safe_load)
+
+    # GitHub search returns at most this many results per query, whatever the page size.
+    _SEARCH_RESULT_LIMIT = 1000
+    _SEARCH_PAGE_SIZE = 100
+    _SEARCH_EARLIEST_DATE = date(2008, 1, 1)
+
+    @staticmethod
+    async def _search_commits_page(owner: str, query: str, page: int, retries_count: int = 3) -> dict:
+        """
+        Fetch one page of the REST commit search, authenticated with the token of `owner`.
+        The query names the owner, so it stays out of errors: Action logs of public profile repos are public.
+        """
+        headers = {"Authorization": f"Bearer {DownloadManager._token_for({'_auth_owner': owner})}", "Accept": "application/vnd.github+json"}
+        params = {"q": query, "per_page": DownloadManager._SEARCH_PAGE_SIZE, "page": page}
+        res = await DownloadManager._client.get("https://api.github.com/search/commits", params=params, headers=headers)
+        if res.status_code == 200:
+            return res.json()
+        if res.status_code in (403, 429) and retries_count > 0:
+            reset = res.headers.get("x-ratelimit-reset")
+            await asyncio.sleep(min(60.0, max(1.0, float(reset) - time())) if reset else 10.0)
+            return await DownloadManager._search_commits_page(owner, query, page, retries_count - 1)
+        raise Exception(f"Commit search failed (HTTP {res.status_code}, x-ratelimit-remaining={res.headers.get('x-ratelimit-remaining', '?')})")
+
+    @staticmethod
+    async def _collect_commit_repositories(owner: str, author: str, start: date, end: date, found: Set[Tuple[str, str]]):
+        query = f"author:{author} org:{owner} author-date:{start.isoformat()}..{end.isoformat()}"
+        first_page = await DownloadManager._search_commits_page(owner, query, 1)
+        total = first_page["total_count"]
+        if total > DownloadManager._SEARCH_RESULT_LIMIT and end > start:
+            middle = start + timedelta(days=(end - start).days // 2)
+            await DownloadManager._collect_commit_repositories(owner, author, start, middle, found)
+            await DownloadManager._collect_commit_repositories(owner, author, middle + timedelta(days=1), end, found)
+            return
+        pages = [first_page]
+        last_page = ceil(min(total, DownloadManager._SEARCH_RESULT_LIMIT) / DownloadManager._SEARCH_PAGE_SIZE)
+        for page in range(2, last_page + 1):
+            pages.append(await DownloadManager._search_commits_page(owner, query, page))
+        for item in (item for page in pages for item in page["items"]):
+            found.add((item["repository"]["owner"]["login"], item["repository"]["name"]))
+
+    @staticmethod
+    async def search_commit_repositories(owner: str, author: str) -> Set[Tuple[str, str]]:
+        """
+        Find repositories under `owner` with commits by `author`, through the commit search.
+        Fine-grained PATs do not see private repositories in `repositoriesContributedTo`, but do in search.
+        Date ranges over the search result limit are halved until each fits.
+
+        :returns: Set of (owner login, repository name).
+        """
+        found = set()
+        start, end = DownloadManager._SEARCH_EARLIEST_DATE, date.today() + timedelta(days=1)
+        await DownloadManager._collect_commit_repositories(owner, author, start, end, found)
+        return found
 
     @staticmethod
     def _token_for(kwargs: dict) -> str:
