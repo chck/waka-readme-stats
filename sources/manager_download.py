@@ -251,6 +251,17 @@ class DownloadManager:
         return await DownloadManager._get_remote_resource(resource, safe_load)
 
     @staticmethod
+    def _token_for(kwargs: dict) -> str:
+        """
+        Select the token for a query: `_auth_owner` if given, else the queried repository `owner`.
+        Owners without an entry in `EXTRA_GH_TOKENS` use `GH_TOKEN`.
+        """
+        owner = kwargs.get("_auth_owner") or kwargs.get("owner")
+        if owner is None:
+            return EM.GH_TOKEN
+        return EM.EXTRA_GH_TOKENS.get(owner.lower(), EM.GH_TOKEN)
+
+    @staticmethod
     async def _fetch_graphql_query(query: str, retries_count: int = 10, **kwargs) -> dict:
         """
         Execute GitHub GraphQL API simple query.
@@ -259,12 +270,20 @@ class DownloadManager:
         :param kwargs: Parameters for substitution of variables in dynamic query.
         :return: Response JSON dictionary.
         """
-        headers = {"Authorization": f"Bearer {EM.GH_TOKEN}"}
+        headers = {"Authorization": f"Bearer {DownloadManager._token_for(kwargs)}"}
         res = await DownloadManager._client.post(
             "https://api.github.com/graphql", json={"query": Template(GITHUB_API_QUERIES[query]).substitute(kwargs)}, headers=headers
         )
         if res.status_code == 200:
-            return res.json()
+            body = res.json()
+            if "errors" not in body:
+                return body
+            errors_preview = json.dumps(body["errors"])[:500]
+            if body.get("data") is None:
+                raise Exception(f"Query '{query}' failed with GraphQL errors: {errors_preview}")
+            # Partial results: inaccessible nodes come back as null alongside `errors`; keep the rest.
+            DBM.w(f"Query '{query}' returned partial data with GraphQL errors: {errors_preview}")
+            return {"data": body["data"]}
 
         # Transient errors can happen (GitHub flakiness, rate limiting, proxies returning HTML/empty bodies).
         if res.status_code in (502, 503, 504, 429, 403) and retries_count > 0:

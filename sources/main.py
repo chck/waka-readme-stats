@@ -246,6 +246,31 @@ async def get_short_github_info() -> str:
     return stats
 
 
+async def collect_extra_owner_repositories(known: List[Dict]) -> List[Dict]:
+    """
+    Collects repositories the user contributed to under each `EXTRA_GH_TOKENS` owner, using that owner's token.
+    `GH_TOKEN` cannot see them when the owner blocks it (e.g. an organization that only allows fine-grained PATs).
+
+    :param known: Repositories already collected, skipped by owner and name.
+    :returns: Newly found repositories.
+    """
+    seen = {(repo["owner"]["login"].lower(), repo["name"]) for repo in known}
+    found = list()
+    for owner in EM.EXTRA_GH_TOKENS.keys():
+        DBM.i(f"\tGetting repositories contributed to under '{owner}' with its own token...")
+        contributed = await DM.get_remote_graphql("repos_contributed_to", username=GHM.USER.login, _auth_owner=owner)
+        for repo in contributed:
+            if repo is None or repo["isFork"]:
+                continue
+            key = (repo["owner"]["login"].lower(), repo["name"])
+            if key[0] != owner or key in seen:
+                continue
+            seen.add(key)
+            found.append(repo)
+        DBM.g(f"\tRepositories under '{owner}' collected!")
+    return found
+
+
 async def collect_user_repositories() -> Dict:
     """
     Collects information about all the user repositories available.
@@ -276,6 +301,7 @@ async def collect_user_repositories() -> Dict:
     DBM.g("\tUser contributed to repository list collected!")
 
     combined = repositories + contributed_nodes
+    combined += await collect_extra_owner_repositories(combined)
     if EM.MAX_REPOS > 0:
         if len(combined) < EM.MAX_REPOS:
             DBM.i(f"\tFetched repos < MAX_REPOS ({len(combined)} < {EM.MAX_REPOS}).")
