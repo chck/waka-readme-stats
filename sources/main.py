@@ -246,6 +246,44 @@ async def get_short_github_info() -> str:
     return stats
 
 
+async def collect_extra_owner_repositories(known: List[Dict]) -> List[Dict]:
+    """
+    Collects repositories the user owns, collaborates on or committed to under each `EXTRA_GH_TOKENS` owner, using that owner's token.
+    `GH_TOKEN` cannot see them when the owner blocks it (e.g. an organization that only allows fine-grained PATs).
+    Committed-to repositories come from the commit search: with a fine-grained PAT, `repositoriesContributedTo` omits private ones.
+
+    :param known: Repositories already collected, skipped by owner and name.
+    :returns: Newly found repositories.
+    """
+    seen = {(repo["owner"]["login"].lower(), repo["name"]) for repo in known}
+    found = list()
+
+    def add(repo: Optional[Dict], owner: str):
+        # `user_repository_list` filters forks in the query and has no `isFork` field.
+        if repo is None or repo.get("isFork", False):
+            return
+        key = (repo["owner"]["login"].lower(), repo["name"])
+        if key[0] != owner or key in seen:
+            return
+        seen.add(key)
+        found.append(repo)
+
+    owners = list(EM.EXTRA_GH_TOKENS.keys())
+    for ind, owner in enumerate(owners):
+        # Owner names stay out of the log: Action logs of public profile repos are public.
+        DBM.i(f"\tGetting repositories under extra owner {ind + 1}/{len(owners)} with its own token...")
+        affiliated = await DM.get_remote_graphql("user_repository_list", username=GHM.USER.login, id=GHM.USER.node_id, _auth_owner=owner)
+        for repo in affiliated:
+            add(repo, owner)
+        for repo_owner, repo_name in sorted(await DM.search_commit_repositories(owner, GHM.USER.login)):
+            if (repo_owner.lower(), repo_name) in seen:
+                continue
+            info = await DM.get_remote_graphql("repository_info", owner=repo_owner, name=repo_name)
+            add(info["data"]["repository"], owner)
+        DBM.g(f"\tRepositories under extra owner {ind + 1}/{len(owners)} collected!")
+    return found
+
+
 async def collect_user_repositories() -> Dict:
     """
     Collects information about all the user repositories available.
@@ -276,6 +314,7 @@ async def collect_user_repositories() -> Dict:
     DBM.g("\tUser contributed to repository list collected!")
 
     combined = repositories + contributed_nodes
+    combined += await collect_extra_owner_repositories(combined)
     if EM.MAX_REPOS > 0:
         if len(combined) < EM.MAX_REPOS:
             DBM.i(f"\tFetched repos < MAX_REPOS ({len(combined)} < {EM.MAX_REPOS}).")

@@ -1,4 +1,22 @@
 from os import getenv
+from re import fullmatch
+from typing import Dict
+
+
+def parse_owner_tokens(raw: str) -> Dict[str, str]:
+    tokens = dict()
+    for line_number, line in enumerate(raw.splitlines(), start=1):
+        line = line.strip()
+        if line == "":
+            continue
+        owner, separator, token = line.partition("=")
+        owner, token = owner.strip(), token.strip()
+        if separator == "" or owner == "" or token == "":
+            raise ValueError(f"EXTRA_GH_TOKENS line {line_number} is not in 'owner=token' form; fix the input and rerun")
+        if fullmatch(r"[A-Za-z0-9-]+", owner) is None:
+            raise ValueError(f"EXTRA_GH_TOKENS line {line_number} has an owner that is not a GitHub login (letters, digits, '-'); fix the input and rerun")
+        tokens[owner.lower()] = token
+    return tokens
 
 
 class EnvironmentManager:
@@ -22,6 +40,9 @@ class EnvironmentManager:
         raise KeyError("Missing required token: set INPUT_GH_TOKEN")
 
     PUSH_TOKEN = getenv("INPUT_PUSH_TOKEN", "").strip()
+
+    # Per-owner tokens (e.g. fine-grained PATs for organizations that block classic PATs), one `owner=token` per line.
+    EXTRA_GH_TOKENS = parse_owner_tokens(getenv("INPUT_EXTRA_GH_TOKENS", ""))
 
     # stats for the author or the one with the token
     GH_USER = getenv("INPUT_GH_USER", "").strip()

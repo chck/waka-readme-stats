@@ -316,6 +316,8 @@ The `MAX_REPOS` flag can be set to limit how many GitHub repositories are fetche
 
 If you see examples using `MAX_CAP`, that is a deprecated alias for `MAX_REPOS`.
 
+The `EXTRA_GH_TOKENS` flag adds tokens for repository owners that `GH_TOKEN` cannot read, such as organizations that block classic PATs and only allow fine-grained PATs. Put one `owner=token` per line in a single secret and pass it as `EXTRA_GH_TOKENS: ${{ secrets.EXTRA_GH_TOKENS }}`, so organization names stay out of the workflow file. Queries for repositories of a listed owner use its token, and repositories you committed to under that owner are found through the commit search, since `repositoriesContributedTo` omits private repositories for fine-grained PATs. A fine-grained PAT needs read-only `Contents` access to the organization's repositories.
+
 The `WAKATIME_API_URL` flag can be set if you are hosting your own wakatime compliant backend like [wakapi](https://github.com/muety/wakapi). You only have to supply your base url like so `https://your-own-wakapi.dev/api/`
 
 The `SYMBOL_VERSION` flag can be set for the symbol for the progress bar (default: `1`).

@@ -13,6 +13,11 @@ inputs:
     required: false
     default: ${{ github.token }}
 
+  EXTRA_GH_TOKENS:
+    description: 'Per-owner tokens, one "owner=token" per line. Queries for repositories of that owner use its token instead of GH_TOKEN (e.g. fine-grained PATs for organizations that block classic PATs)'
+    required: false
+    default: ""
+
   WAKATIME_API_KEY:
     description: 'Your Wakatime API Key'
     required: true
