@@ -248,7 +248,7 @@ async def get_short_github_info() -> str:
 
 async def collect_extra_owner_repositories(known: List[Dict]) -> List[Dict]:
     """
-    Collects repositories the user contributed to under each `EXTRA_GH_TOKENS` owner, using that owner's token.
+    Collects repositories the user owns, collaborates on or contributed to under each `EXTRA_GH_TOKENS` owner, using that owner's token.
     `GH_TOKEN` cannot see them when the owner blocks it (e.g. an organization that only allows fine-grained PATs).
 
     :param known: Repositories already collected, skipped by owner and name.
@@ -259,10 +259,12 @@ async def collect_extra_owner_repositories(known: List[Dict]) -> List[Dict]:
     owners = list(EM.EXTRA_GH_TOKENS.keys())
     for ind, owner in enumerate(owners):
         # Owner names stay out of the log: Action logs of public profile repos are public.
-        DBM.i(f"\tGetting repositories contributed to under extra owner {ind + 1}/{len(owners)} with its own token...")
+        DBM.i(f"\tGetting repositories under extra owner {ind + 1}/{len(owners)} with its own token...")
+        affiliated = await DM.get_remote_graphql("user_repository_list", username=GHM.USER.login, id=GHM.USER.node_id, _auth_owner=owner)
         contributed = await DM.get_remote_graphql("repos_contributed_to", username=GHM.USER.login, _auth_owner=owner)
-        for repo in contributed:
-            if repo is None or repo["isFork"]:
+        for repo in affiliated + contributed:
+            # `user_repository_list` filters forks in the query and has no `isFork` field.
+            if repo is None or repo.get("isFork", False):
                 continue
             key = (repo["owner"]["login"].lower(), repo["name"])
             if key[0] != owner or key in seen:
